@@ -329,6 +329,7 @@ public class SettingsActivity extends Activity {
         LinearLayout root = newPage(R.string.cat_keyboard_title);
         buildVirtualKeyboardSection(root);
         buildAccessibilitySection(root);
+        buildDisplaySection(root);
         setContent(root);
     }
 
@@ -1123,6 +1124,33 @@ public class SettingsActivity extends Activity {
         accessibilityHint.setTextColor(Color.GRAY);
         accessibilityHint.setPadding(0, dp(4), 0, dp(8));
         root.addView(accessibilityHint);
+    }
+
+    private void buildDisplaySection(LinearLayout root) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+
+        TextView header = new TextView(this);
+        header.setText(R.string.section_display);
+        header.setTextSize(16);
+        header.setTypeface(null, Typeface.BOLD);
+        header.setPadding(0, dp(24), 0, dp(8));
+        root.addView(header);
+
+        Switch keepScreenOn = new Switch(this);
+        keepScreenOn.setText(R.string.keep_screen_on_switch);
+        keepScreenOn.setTextSize(14);
+        keepScreenOn.setChecked(prefs.getBoolean(MainActivity.KEY_KEEP_SCREEN_ON, false));
+        keepScreenOn.setOnCheckedChangeListener((v, checked) ->
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putBoolean(MainActivity.KEY_KEEP_SCREEN_ON, checked).apply());
+        root.addView(keepScreenOn);
+
+        TextView hint = new TextView(this);
+        hint.setText(R.string.keep_screen_on_hint);
+        hint.setTextSize(12);
+        hint.setTextColor(Color.GRAY);
+        hint.setPadding(0, dp(4), 0, dp(8));
+        root.addView(hint);
     }
 
     private void buildOrientationSection(LinearLayout root) {

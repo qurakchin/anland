@@ -314,12 +314,13 @@ public final class Touchpad {
     }
 
     /**
-     * Decide left vs right for a single-button (clickpad) physical press. The
-     * pressing finger is the slowest contact -- it is held still to click -- so
-     * each current contact is compared against the last position recognize()
-     * recorded (lastX1 for the primary finger, lastX2 for the second) and the one
-     * that travelled least wins. Left half of the pad => BTN_LEFT (0x110), right
-     * half => BTN_RIGHT (0x111).
+     * Decide left vs right for a single-button (clickpad) physical press.
+     *
+     * <p>The pad is one continuous clickable surface, not the pair of button
+     * areas a laptop clickpad has. A press made with one finger is always a left
+     * click, wherever on the pad it lands; a press made while two or more
+     * fingers are down is a right click. Judging by the contact's x position
+     * instead was what turned the whole right half of the pad into right clicks.
      *
      * Call on the ACTION_BUTTON_PRESS event. The press triggers cancel(), which
      * does not clear the baseline, so the prior positions are still live. Returns
@@ -343,27 +344,13 @@ public final class Touchpad {
             return 0x110;
         }
 
-        int limit = Math.min(event.getPointerCount(), 2);
-        int slowestIndex = 0;
-        float slowestSpeed = Float.MAX_VALUE;
-        for (int i = 0; i < limit; i++) {
-            float lastX = (i == 0) ? lastX1 : lastX2;
-            float lastY = (i == 0) ? lastY1 : lastY2;
-            float curX = toOutputX(event.getX(i));
-            float curY = toOutputY(event.getY(i));
-            float dx = curX - lastX;
-            float dy = curY - lastY;
-            float speed = dx * dx + dy * dy;
-            if (speed < slowestSpeed) {
-                slowestSpeed = speed;
-                slowestIndex = i;
-            }
-        }
-        float curX = toOutputX(event.getX(slowestIndex));
-        float mid = outputWidth > 0 ? outputWidth / 2f : curX;
-        return curX < mid ? 0x110 : 0x111; // BTN_LEFT / BTN_RIGHT
+        // One finger => BTN_LEFT wherever on the pad the press lands; two or more
+        // fingers => BTN_RIGHT. The pad is one continuous clickable surface, so
+        // the left/right button areas of a laptop clickpad do not apply -- and
+        // judging by x position was what made the whole right half of the pad
+        // right-click.
+        return event.getPointerCount() >= 2 ? 0x111 : 0x110; // BTN_RIGHT / BTN_LEFT
     }
-
     /** Map a pad (input-space) coordinate to the output space recognize() uses. */
     private float toOutputX(float x) {
         return (inputRangeX > 0f && outputWidth > 0)

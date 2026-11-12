@@ -192,6 +192,9 @@
     <!-- Accessibility -->
     <string name="accessibility_switch">无障碍按键拦截</string>
     <string name="accessibility_hint">通过无障碍服务拦截功能键（Fn、F1-F12 等），并将平板键盘上报的返回/浏览器后退键转换为 ESC。如果外接键盘的 Fn 组合键或 ESC 无法正确传到桌面，请启用此项。需要在系统 设置 &gt; 无障碍 中授予无障碍权限（仅需一次）。</string>
+    <string name="section_display">显示</string>
+    <string name="keep_screen_on_switch">保持屏幕常亮</string>
+    <string name="keep_screen_on_hint">默认跟随系统息屏，避免 OLED 长时间显示同一桌面而烧屏。开启后桌面会话期间屏幕不会自动熄灭，适合盯着长时间渲染或编译时使用。</string>
     <!-- Extra keys bar -->
     <!-- Custom layout editor -->
     <!-- Touchpad -->

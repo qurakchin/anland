@@ -143,6 +143,9 @@ public class MainActivity extends Activity
     // (no pipeline was ever initialized). Makes onPause/onResume no-op-and-exit.
     private boolean mForceSettings = false;
     private static final String KEY_ACCESSIBILITY_ENABLED = "accessibility_key_intercept";
+    // Hold the panel awake for the whole session. Off by default: a fullscreen
+    // desktop left idle is exactly what burns an OLED in.
+    static final String KEY_KEEP_SCREEN_ON = "keep_screen_on";
     // Linux input-event-codes.h: KEY_BACK (the browser-back key).
     // When on, the soft keyboard floats over the display instead of shrinking
     // it, so the surface keeps its full size. See relayout().
@@ -732,7 +735,7 @@ public class MainActivity extends Activity
 
         clipboard = new Clipboard(this, mNative);
 
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        applyKeepScreenOn();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         // Take over inset handling: the IME insets are dispatched to our
         // OnApplyWindowInsetsListener (so we can resize the surface) instead of
@@ -1845,10 +1848,30 @@ public class MainActivity extends Activity
             mAudioManager.abandonAudioFocusRequest(mAudioFocusRequest);
     }
 
+    /**
+     * Applies this window's screen-on policy.
+     *
+     * <p>Previously FLAG_KEEP_SCREEN_ON was set unconditionally, so a desktop
+     * session never slept: on an OLED tablet an unchanged fullscreen desktop left
+     * up for hours is the textbook burn-in case. The system timeout is now the
+     * default, and the setting restores constant-on for work that must stay
+     * visible (a render, a long compile you are watching).
+     */
+    private void applyKeepScreenOn() {
+        final boolean keepOn = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_KEEP_SCREEN_ON, false);
+        if (keepOn)
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         mResumed = true;
+        // Picks up a setting changed while the session was in the background.
+        applyKeepScreenOn();
         // Cached while the screen is up: the immersive routing must never read
         // shared preferences from an evdev frame.
         immersiveHudTouch = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -2906,10 +2929,28 @@ public class MainActivity extends Activity
                 && GoldKeyboard.matches(event.getDevice());
     }
 
+    /**
+     * Brightness keys belong to Android.
+     *
+     * <p>The desktop has no backlight device, so forwarding them here made them
+     * do nothing at all: Android never saw the key and the compositor had
+     * nothing to apply it to. Leaving them unconsumed restores the system
+     * brightness control while a desktop session is up. Volume keys are
+     * unaffected -- they are bound to the media stream and are meant to keep
+     * working through the session.
+     */
+    private static boolean isAndroidBrightnessKey(KeyEvent event) {
+        final int keyCode = event.getKeyCode();
+        return keyCode == KeyEvent.KEYCODE_BRIGHTNESS_UP
+                || keyCode == KeyEvent.KEYCODE_BRIGHTNESS_DOWN;
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (handleSourceAwareKey(event))
             return true;
+        if (isAndroidBrightnessKey(event))
+            return false; // Android still owns the backlight
         // Before the repeat swallow: each repeat must become one more tap, so
         // held-key auto-repeat still works (see handleImeDelTap).
         if (handleImeDelTap(event))
@@ -2948,6 +2989,8 @@ public class MainActivity extends Activity
         // this is the only ingress, and the two must not diverge.
         if (handleSourceAwareKey(event))
             return true;
+        if (isAndroidBrightnessKey(event))
+            return false; // Android still owns the backlight
         if (event.getRepeatCount() > 0)
             return true;
 
@@ -3043,6 +3086,8 @@ public class MainActivity extends Activity
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (handleSourceAwareKey(event))
             return true;
+        if (isAndroidBrightnessKey(event))
+            return false; // Android still owns the backlight
         if (handleImeDelTap(event))
             return true;
         forwardKeyToLinux(event);

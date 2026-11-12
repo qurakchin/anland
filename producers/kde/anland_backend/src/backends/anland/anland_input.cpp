@@ -141,8 +141,15 @@ void AnlandInputDevice::pointerMotionAbsolute(const QPointF &position)
 
 void AnlandInputDevice::pointerMotion(const QPointF &position, const QPointF &delta, const QPointF &deltaNonAccelerated)
 {
-    Q_EMIT InputDevice::pointerMotionAbsolute(position, now(), this);
+    // KWin moves the cursor by a relative motion's delta (PointerInputRedirection
+    // does processMotionInternal(m_pos + delta, ...)). Emit the relative motion
+    // first so wl_pointer.relative_motion sees it, then the absolute one, which
+    // puts the cursor exactly where the host's is. The other order let the
+    // absolute position be set and then the same delta be added on top of it,
+    // leaving the cursor one delta ahead of the host per frame -- drift that
+    // accumulated and became a visibly short stroke on fast slides.
     Q_EMIT InputDevice::pointerMotion(delta, deltaNonAccelerated, now(), this);
+    Q_EMIT InputDevice::pointerMotionAbsolute(position, now(), this);
     Q_EMIT InputDevice::pointerFrame(this);
 }
 

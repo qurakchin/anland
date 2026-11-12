@@ -687,9 +687,10 @@ final class ImmersiveMode implements InputGrabTransport.Listener {
 
     /**
      * Mouse and clickpad buttons. A single-button clickpad reports every press as
-     * BTN_LEFT, so the pressing finger's position decides left vs right — the
-     * same rule the Android-captured pad uses — and the choice is latched, so a
-     * finger drifting across the midline cannot strand a held button.
+     * BTN_LEFT, so the live contact count decides left vs right — the same rule
+     * the Android-captured pad uses (one finger left, two or more right) — and
+     * the choice is latched, so a finger lifting mid-press cannot strand a held
+     * button.
      */
     private void handlePointerButton(Dev d, int code, boolean pressed) {
         int button = code;

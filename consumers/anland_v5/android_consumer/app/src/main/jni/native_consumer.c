@@ -978,6 +978,20 @@ static void on_fallback(void *userdata)
     struct consumer_state *s = userdata;
     LOGI("fallback triggered");
 
+    /* Ask the render thread to reconnect. Without this the consumer stayed in
+     * fallback until the process was restarted: nativeStart() was the only
+     * writer of need_reconnect, so a producer that was not delivering its fds
+     * yet -- or that dropped them mid-session -- left the window black for
+     * good, and the only way back was force-stopping and starting the app.
+     * The render loop already retries every 500 ms while do_connect() fails,
+     * so this self-heals as soon as the producer accepts the handover. Guard
+     * on `running`: an ordinary shutdown enters fallback too, and must not be
+     * turned into a reconnect. */
+    if (s->running) {
+        LOGI("fallback: scheduling reconnect");
+        s->need_reconnect = true;
+    }
+
     /* The producer is gone (or the link broke): its top-app boost must end
      * now, before any process can leak foreground priority for a whole
      * session. One tree sweep covers every pid either mode boosted. */

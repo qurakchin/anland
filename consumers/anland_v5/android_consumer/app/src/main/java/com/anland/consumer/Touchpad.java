@@ -344,11 +344,6 @@ public final class Touchpad {
             return 0x110;
         }
 
-        // One finger => BTN_LEFT wherever on the pad the press lands; two or more
-        // fingers => BTN_RIGHT. The pad is one continuous clickable surface, so
-        // the left/right button areas of a laptop clickpad do not apply -- and
-        // judging by x position was what made the whole right half of the pad
-        // right-click.
         return event.getPointerCount() >= 2 ? 0x111 : 0x110; // BTN_RIGHT / BTN_LEFT
     }
     /** Map a pad (input-space) coordinate to the output space recognize() uses. */

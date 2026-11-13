@@ -39,6 +39,9 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.List;
+
 
 
 import java.io.ByteArrayOutputStream;
@@ -343,8 +346,131 @@ public class SettingsActivity extends Activity {
     private void showConnectionPage() {
         currentPage = Page.CONNECTION;
         LinearLayout root = newPage(R.string.section_connection);
+        buildStartupSection(root);
         addConnectionSection(root);
         setContent(root);
+    }
+
+    /**
+     * How a launch picks its window: which container, and whether an existing
+     * window for it is reused. Both were previously "whatever the last daemon
+     * happened to publish", which made the launcher icon open an arbitrary
+     * container and every launch add a card to Recents.
+     */
+    private void buildStartupSection(LinearLayout root) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+
+        Switch reuse = new Switch(this);
+        reuse.setText(R.string.reuse_window_switch);
+        reuse.setTextSize(14);
+        reuse.setPadding(0, dp(8), 0, 0);
+        reuse.setChecked(prefs.getBoolean(MainActivity.KEY_REUSE_WINDOW, true));
+        reuse.setOnCheckedChangeListener((v, checked) ->
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putBoolean(MainActivity.KEY_REUSE_WINDOW, checked).apply());
+        root.addView(reuse);
+
+        TextView reuseHint = new TextView(this);
+        reuseHint.setText(R.string.reuse_window_hint);
+        reuseHint.setTextSize(12);
+        reuseHint.setTextColor(Color.GRAY);
+        reuseHint.setPadding(0, dp(4), 0, dp(12));
+        root.addView(reuseHint);
+
+        TextView label = new TextView(this);
+        label.setText(R.string.startup_container_label);
+        label.setTextSize(14);
+        label.setTextColor(Color.GRAY);
+        label.setPadding(0, dp(8), 0, dp(4));
+        root.addView(label);
+
+        String current = prefs.getString(MainActivity.KEY_DEFAULT_CONTAINER, "");
+        String shown = current == null || current.trim().isEmpty()
+                ? getString(R.string.startup_container_auto) : current.trim();
+
+        Button pick = new Button(this);
+        pick.setText(getString(R.string.startup_container_current, shown));
+        pick.setOnClickListener(v -> showContainerPicker());
+        root.addView(pick);
+
+        TextView hint = new TextView(this);
+        hint.setText(R.string.startup_container_hint);
+        hint.setTextSize(12);
+        hint.setTextColor(Color.GRAY);
+        hint.setPadding(0, dp(4), 0, dp(12));
+        root.addView(hint);
+    }
+
+    /** Lists the containers that are running right now, on a worker thread. */
+    private void showContainerPicker() {
+        Thread worker = new Thread(() -> {
+            final List<DesktopTargets.Container> containers = DesktopTargets.running();
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed())
+                    return;
+                final List<String> labels = new ArrayList<>();
+                labels.add(getString(R.string.startup_container_auto));
+                for (DesktopTargets.Container container : containers)
+                    labels.add(container.name);
+                labels.add(getString(R.string.startup_container_manual));
+
+                String saved = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .getString(MainActivity.KEY_DEFAULT_CONTAINER, "");
+                int checked = 0;
+                for (int i = 0; i < containers.size(); i++) {
+                    if (containers.get(i).name.equals(saved)) {
+                        checked = i + 1;
+                        break;
+                    }
+                }
+
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.startup_container_title)
+                        .setSingleChoiceItems(labels.toArray(new String[0]), checked,
+                                (dialog, which) -> {
+                                    dialog.dismiss();
+                                    if (which == 0)
+                                        setDefaultContainer("");
+                                    else if (which <= containers.size())
+                                        setDefaultContainer(containers.get(which - 1).name);
+                                    else
+                                        promptContainerName();
+                                    showConnectionPage();
+                                })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+
+                if (containers.isEmpty())
+                    Toast.makeText(this, R.string.startup_container_unavailable,
+                            Toast.LENGTH_SHORT).show();
+            });
+        }, "anland-container-picker");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void promptContainerName() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint(R.string.startup_container_auto);
+        input.setText(getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(MainActivity.KEY_DEFAULT_CONTAINER, ""));
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.startup_container_label)
+                .setView(input)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    setDefaultContainer(input.getText().toString().trim());
+                    showConnectionPage();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void setDefaultContainer(String name) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putString(MainActivity.KEY_DEFAULT_CONTAINER,
+                        DesktopTargets.isSafeName(name) ? name : "")
+                .apply();
     }
 
     private void showResolutionPage() {
@@ -1124,6 +1250,33 @@ public class SettingsActivity extends Activity {
         accessibilityHint.setTextColor(Color.GRAY);
         accessibilityHint.setPadding(0, dp(4), 0, dp(8));
         root.addView(accessibilityHint);
+
+        // ColorOS re-creates the problem on every boot, so the setting alone is
+        // not enough; this puts the service back whenever the app starts.
+        Switch autoRepair = new Switch(this);
+        autoRepair.setText(R.string.auto_accessibility_switch);
+        autoRepair.setTextSize(14);
+        autoRepair.setPadding(0, dp(8), 0, 0);
+        autoRepair.setChecked(prefs.getBoolean(MainActivity.KEY_AUTO_ACCESSIBILITY, true));
+        autoRepair.setOnCheckedChangeListener((v, checked) ->
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putBoolean(MainActivity.KEY_AUTO_ACCESSIBILITY, checked).apply());
+        root.addView(autoRepair);
+
+        TextView autoRepairHint = new TextView(this);
+        autoRepairHint.setText(R.string.auto_accessibility_hint);
+        autoRepairHint.setTextSize(12);
+        autoRepairHint.setTextColor(Color.GRAY);
+        autoRepairHint.setPadding(0, dp(4), 0, dp(4));
+        root.addView(autoRepairHint);
+
+        Button repairNow = new Button(this);
+        repairNow.setText(R.string.accessibility_repair_now);
+        repairNow.setOnClickListener(v -> {
+            MainActivity.repairAccessibilityNow();
+            Toast.makeText(this, R.string.accessibility_repair_now, Toast.LENGTH_SHORT).show();
+        });
+        root.addView(repairNow);
     }
 
     private void buildDisplaySection(LinearLayout root) {
@@ -1151,6 +1304,23 @@ public class SettingsActivity extends Activity {
         hint.setTextColor(Color.GRAY);
         hint.setPadding(0, dp(4), 0, dp(8));
         root.addView(hint);
+
+        Switch lockOnOff = new Switch(this);
+        lockOnOff.setText(R.string.lock_on_screen_off_switch);
+        lockOnOff.setTextSize(14);
+        lockOnOff.setPadding(0, dp(8), 0, 0);
+        lockOnOff.setChecked(prefs.getBoolean(MainActivity.KEY_LOCK_ON_SCREEN_OFF, false));
+        lockOnOff.setOnCheckedChangeListener((v, checked) ->
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putBoolean(MainActivity.KEY_LOCK_ON_SCREEN_OFF, checked).apply());
+        root.addView(lockOnOff);
+
+        TextView lockHint = new TextView(this);
+        lockHint.setText(R.string.lock_on_screen_off_hint);
+        lockHint.setTextSize(12);
+        lockHint.setTextColor(Color.GRAY);
+        lockHint.setPadding(0, dp(4), 0, dp(8));
+        root.addView(lockHint);
     }
 
     private void buildOrientationSection(LinearLayout root) {

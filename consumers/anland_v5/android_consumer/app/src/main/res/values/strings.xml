@@ -199,9 +199,23 @@
     <!-- Accessibility -->
     <string name="accessibility_switch">Accessibility Key Interception</string>
     <string name="accessibility_hint">Intercept function keys (Fn, F1-F12 etc.) via AccessibilityService and convert tablet-keyboard Back/Browser Back to ESC. Enable this if external keyboard Fn combos or ESC don\'t reach the desktop correctly. Requires Accessibility permission granted in system Settings &gt; Accessibility (one-time).</string>
+    <string name="auto_accessibility_switch">Restore accessibility service automatically</string>
+    <string name="auto_accessibility_hint">ColorOS drops third-party accessibility services after a reboot, which leaves the keyboard on Android and breaks apps like Key Mapper. With this on, the service is put back through root every time the app starts, and both packages are kept out of the system\'s clean-up list.</string>
+    <string name="accessibility_repair_now">Restore now</string>
     <string name="section_display">Display</string>
     <string name="keep_screen_on_switch">Keep Screen On</string>
     <string name="keep_screen_on_hint">Follows the system screen timeout by default, so a static desktop cannot burn the OLED. Turn this on to keep the panel awake for the whole session — useful while watching a long render or build.</string>
+    <string name="lock_on_screen_off_switch">Lock desktop when the screen turns off</string>
+    <string name="lock_on_screen_off_hint">The container has no logind, so KDE\'s own idle detection never fires and the desktop would come back unlocked. Android\'s screen-off is the only idle signal the session gets; with this on, the desktop is locked at that moment.</string>
+    <string name="reuse_window_switch">Reuse the open window</string>
+    <string name="reuse_window_hint">Launching the same container again brings its window forward instead of adding another card to Recents.</string>
+    <string name="startup_container_label">Container the launcher opens</string>
+    <string name="startup_container_auto">Auto (last used)</string>
+    <string name="startup_container_current">Current: %1$s</string>
+    <string name="startup_container_title">Open which container?</string>
+    <string name="startup_container_unavailable">Could not list containers (root unavailable).</string>
+    <string name="startup_container_manual">Type a name…</string>
+    <string name="startup_container_hint">Only containers that are running right now are listed. Auto follows whichever container was connected last.</string>
 
     <!-- Extra keys bar -->
     <!-- Custom layout editor -->

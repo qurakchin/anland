@@ -192,9 +192,23 @@
     <!-- Accessibility -->
     <string name="accessibility_switch">无障碍按键拦截</string>
     <string name="accessibility_hint">通过无障碍服务拦截功能键（Fn、F1-F12 等），并将平板键盘上报的返回/浏览器后退键转换为 ESC。如果外接键盘的 Fn 组合键或 ESC 无法正确传到桌面，请启用此项。需要在系统 设置 &gt; 无障碍 中授予无障碍权限（仅需一次）。</string>
+    <string name="auto_accessibility_switch">自动恢复无障碍服务</string>
+    <string name="auto_accessibility_hint">ColorOS 重启后会移除第三方无障碍服务，键盘于是重新归 Android 管，Key Mapper 这类应用也会失效。开启后每次启动都用 root 把服务放回去，并把本应用与 Key Mapper 加入系统的免清理名单。</string>
+    <string name="accessibility_repair_now">立即恢复</string>
     <string name="section_display">显示</string>
     <string name="keep_screen_on_switch">保持屏幕常亮</string>
     <string name="keep_screen_on_hint">默认跟随系统息屏，避免 OLED 长时间显示同一桌面而烧屏。开启后桌面会话期间屏幕不会自动熄灭，适合盯着长时间渲染或编译时使用。</string>
+    <string name="lock_on_screen_off_switch">熄屏时锁定桌面</string>
+    <string name="lock_on_screen_off_hint">容器里没有 logind，KDE 自己的空闲检测永远不会触发，桌面唤醒后仍是解锁状态。Android 熄屏是会话唯一能拿到的空闲信号，开启后会在那一刻锁定桌面。</string>
+    <string name="reuse_window_switch">复用已打开的窗口</string>
+    <string name="reuse_window_hint">再次打开同一个容器时，把已有窗口提到前台，而不是在最近任务里再加一张卡片。</string>
+    <string name="startup_container_label">桌面图标打开的容器</string>
+    <string name="startup_container_auto">自动（最后使用）</string>
+    <string name="startup_container_current">当前：%1$s</string>
+    <string name="startup_container_title">要打开哪个容器？</string>
+    <string name="startup_container_unavailable">无法列出容器（root 不可用）。</string>
+    <string name="startup_container_manual">手动输入名称…</string>
+    <string name="startup_container_hint">这里只列出当前正在运行的容器。选"自动"则跟随最后一次连接的容器。</string>
     <!-- Extra keys bar -->
     <!-- Custom layout editor -->
     <!-- Touchpad -->

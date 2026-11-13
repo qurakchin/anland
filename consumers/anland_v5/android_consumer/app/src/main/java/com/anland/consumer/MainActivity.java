@@ -7,8 +7,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.hardware.display.DisplayManager;
@@ -139,6 +141,17 @@ public class MainActivity extends Activity
             new java.util.HashMap<>();
     // The socket path this window is currently registered under in sWindowsBySocket.
     private String mRegisteredSocket = null;
+    // Container preference lookup, resolved once per window (see
+    // preferredContainerSocket). A null cache with the flag set means "none".
+    private boolean mContainerSocketResolved = false;
+    private String mContainerSocketCache = null;
+    // Socket whose container name has already been looked up, so reconnects do
+    // not repeat the su round trip.
+    private String mRememberedSocket = null;
+    // Locks the container session when Android's panel turns off.
+    private BroadcastReceiver screenOffReceiver = null;
+    private long lastDesktopLockMs = 0L;
+    private long pausedAtMs = 0L;
     // Set when onCreate found the target socket missing and bounced to Settings
     // (no pipeline was ever initialized). Makes onPause/onResume no-op-and-exit.
     private boolean mForceSettings = false;
@@ -146,6 +159,20 @@ public class MainActivity extends Activity
     // Hold the panel awake for the whole session. Off by default: a fullscreen
     // desktop left idle is exactly what burns an OLED in.
     static final String KEY_KEEP_SCREEN_ON = "keep_screen_on";
+    // Lock the container's desktop session when Android's panel turns off. The
+    // container has no logind, so KDE's own idle detection never fires; this is
+    // the only idle signal the session actually gets.
+    static final String KEY_LOCK_ON_SCREEN_OFF = "lock_on_screen_off";
+    // Reuse an open window when the same socket is launched again, instead of
+    // stacking another task in recents on every launch.
+    static final String KEY_REUSE_WINDOW = "reuse_socket_window";
+    // Container the launcher icon opens. Empty means "whichever was used last".
+    static final String KEY_DEFAULT_CONTAINER = "default_container";
+    static final String KEY_LAST_CONTAINER = "last_container";
+    // Re-apply the accessibility service through root at start-up: ColorOS drops
+    // third-party accessibility services and only the system setting brings them
+    // back.
+    static final String KEY_AUTO_ACCESSIBILITY = "auto_repair_accessibility";
     // Linux input-event-codes.h: KEY_BACK (the browser-back key).
     // When on, the soft keyboard floats over the display instead of shrinking
     // it, so the surface keeps its full size. See relayout().
@@ -404,16 +431,244 @@ public class MainActivity extends Activity
     }
 
     // The daemon socket this window targets: the launch-Intent override if any,
-    // else the saved pref, else the built-in default. Never null/blank. This is
-    // both the native connection target and this window's dedup key.
+    // else the container the user pinned (or last used), else the saved pref,
+    // else the built-in default. Never null/blank. This is both the native
+    // connection target and this window's dedup key.
     private String resolveSocketPath() {
         String sock = mSocketOverride;
+        if (sock == null || sock.trim().isEmpty())
+            sock = preferredContainerSocket();
         if (sock == null || sock.trim().isEmpty())
             sock = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                     .getString(KEY_SOCKET_PATH, DEFAULT_SOCKET_PATH);
         if (sock == null || sock.trim().isEmpty())
             sock = DEFAULT_SOCKET_PATH;
         return sock.trim();
+    }
+
+    /**
+     * The socket of the container the launcher should open.
+     *
+     * <p>Reading it costs one {@code su} round trip, and
+     * {@link #resolveSocketPath()} is called several times per start-up, so the
+     * answer is cached for the life of the window. A socket name changes when
+     * its container restarts, which is exactly why the name is stored instead of
+     * the path.
+     */
+    private String preferredContainerSocket() {
+        if (mContainerSocketResolved)
+            return mContainerSocketCache;
+        mContainerSocketResolved = true;
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String name = prefs.getString(KEY_DEFAULT_CONTAINER, "");
+        if (name == null || name.trim().isEmpty())
+            name = prefs.getString(KEY_LAST_CONTAINER, "");
+        if (name == null || name.trim().isEmpty())
+            return null;
+        String socket = DesktopTargets.socketOf(name.trim());
+        if (socket != null && isSocketFile(socket)) {
+            Log.i(TAG, "preferred container " + name.trim() + " -> " + socket);
+            mContainerSocketCache = socket;
+        } else {
+            Log.w(TAG, "preferred container " + name.trim() + " has no live socket");
+        }
+        return mContainerSocketCache;
+    }
+
+    /** Records which container this window ended up talking to. */
+    private void rememberContainer(final String socket) {
+        if (socket == null || socket.equals(mRememberedSocket))
+            return;
+        mRememberedSocket = socket;
+        Thread worker = new Thread(() -> {
+            String name = DesktopTargets.containerFor(socket);
+            if (name == null)
+                return;
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putString(KEY_LAST_CONTAINER, name).apply();
+            Log.i(TAG, "last container is now " + name);
+        }, "anland-remember-container");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Brings an existing window for the same socket to the front.
+     *
+     * <p>Every parameter launch makes its own task ({@code documentLaunchMode}
+     * is "always"), so without this the recents list grows by one card per
+     * launch of the same container. The task's base intent carries the extras
+     * the launch was made with, which is what identifies it.
+     *
+     * @return true when this launch was satisfied by an existing task
+     */
+    private boolean reuseExistingTask() {
+        if (mSocketOverride == null)
+            return false;
+        ActivityManager am = getSystemService(ActivityManager.class);
+        if (am == null)
+            return false;
+        final String target = resolveSocketPath();
+        final int mine = getTaskId();
+        for (ActivityManager.AppTask task : am.getAppTasks()) {
+            ActivityManager.RecentTaskInfo info;
+            try {
+                info = task.getTaskInfo();
+            } catch (RuntimeException e) {
+                continue;   // task vanished between the listing and the read
+            }
+            // An empty task keeps its base intent after its activity is gone
+            // (an update kills the process, the card stays). Moving that one to
+            // the front would show nothing at all.
+            if (info == null || info.taskId == mine || info.baseIntent == null
+                    || info.numActivities <= 0)
+                continue;
+            String other = info.baseIntent.getStringExtra(EXTRA_SOCKET_PATH);
+            if (other == null || !target.equals(other.trim()))
+                continue;
+            Log.i(TAG, "reusing task " + info.taskId + " for socket " + target);
+            am.moveTaskToFront(info.taskId, 0);
+            finishAndRemoveTask();
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Re-applies the accessibility service through root.
+     *
+     * <p>ColorOS drops third-party accessibility services -- the app's own key
+     * interception and Key Mapper alike -- and the system setting is the only
+     * place to put them back. Doing it from here means the user never has to
+     * walk to Settings after a reboot.
+     */
+    private static final java.util.concurrent.atomic.AtomicBoolean sAccessibilityRepaired =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    private void repairAccessibilityInBackground() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (!prefs.getBoolean(KEY_ACCESSIBILITY_ENABLED, false))
+            return;
+        if (!prefs.getBoolean(KEY_AUTO_ACCESSIBILITY, true))
+            return;
+        if (!sAccessibilityRepaired.compareAndSet(false, true))
+            return;
+        Thread worker = new Thread(() -> {
+            SuCommand.CommandResult result = new SuCommand.SuRunner()
+                    .run(accessibilityRepairCommand(), 8000L);
+            if (result.isClean())
+                Log.i(TAG, "accessibility services re-applied");
+            else
+                Log.w(TAG, "accessibility repair failed: " + result.stderr.trim());
+        }, "anland-accessibility");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Puts the app's own service back in place and keeps it, and Key Mapper,
+     * out of ColorOS's accessibility clean-up list.
+     */
+    private static String accessibilityRepairCommand() {
+        final String own = "com.anland.consumer/com.anland.consumer.KeyInterceptor";
+        final String keyMapper = "io.github.sds100.keymapper";
+        final String self = "com.anland.consumer";
+        return "cur=$(settings get secure enabled_accessibility_services); "
+                + "[ \"$cur\" = null ] && cur=; "
+                + "case \"$cur\" in *" + own + "*) ;; *) "
+                + "if [ -z \"$cur\" ]; then cur=" + own + "; else cur=\"$cur:" + own + "\"; fi; "
+                + "settings put secure enabled_accessibility_services \"$cur\";; esac; "
+                + "settings put secure accessibility_enabled 1; "
+                + "skip=$(settings get secure accessibility_turn_off_skip_package); "
+                + "[ \"$skip\" = null ] && skip=; "
+                + "for pkg in " + keyMapper + " " + self + "; do "
+                + "case \":$skip:\" in *\":$pkg:\"*) ;; *) "
+                + "if [ -z \"$skip\" ]; then skip=$pkg; else skip=\"$skip:$pkg\"; fi; "
+                + "settings put secure accessibility_turn_off_skip_package \"$skip\";; esac; "
+                + "done";
+    }
+
+    /** Settings button: re-apply the services regardless of the start-up pref. */
+    static void repairAccessibilityNow() {
+        Thread worker = new Thread(() -> {
+            SuCommand.CommandResult result = new SuCommand.SuRunner()
+                    .run(accessibilityRepairCommand(), 8000L);
+            if (result.isClean())
+                Log.i(TAG, "manual accessibility repair applied");
+            else
+                Log.w(TAG, "manual accessibility repair failed: " + result.stderr.trim());
+        }, "anland-accessibility-manual");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    // ---- desktop lock on screen off ---------------------------------------
+
+    private void registerScreenOffReceiver() {
+        if (screenOffReceiver != null)
+            return;
+        screenOffReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (!Intent.ACTION_SCREEN_OFF.equals(intent.getAction()))
+                    return;
+                // The screen-off broadcast and this window's pause race each
+                // other; a window that paused a moment ago is still the one the
+                // user was looking at, one that paused minutes ago is not.
+                if (!mResumed
+                        && SystemClock.uptimeMillis() - pausedAtMs > 3000L)
+                    return;
+                lockDesktop();
+            }
+        };
+        registerReceiver(screenOffReceiver, new IntentFilter(Intent.ACTION_SCREEN_OFF));
+    }
+
+    private void unregisterScreenOffReceiver() {
+        if (screenOffReceiver == null)
+            return;
+        try {
+            unregisterReceiver(screenOffReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Already unregistered with the window.
+        }
+        screenOffReceiver = null;
+    }
+
+    /**
+     * Locks the container's desktop when Android turns the panel off.
+     *
+     * <p>The panel going dark is the only idle signal the container gets: with
+     * no logind inside it, KDE's own screen locker never sees an idle session.
+     */
+    private void lockDesktop() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (!prefs.getBoolean(KEY_LOCK_ON_SCREEN_OFF, false))
+            return;
+        long now = SystemClock.uptimeMillis();
+        if (now - lastDesktopLockMs < 5000L)
+            return;
+        lastDesktopLockMs = now;
+        Thread worker = new Thread(() -> {
+            String container = containerNameForCurrentSocket();
+            if (container == null) {
+                Log.w(TAG, "screen off: no container for " + resolveSocketPath());
+                return;
+            }
+            if (DesktopTargets.lock(container))
+                Log.i(TAG, "screen off: locked desktop in " + container);
+        }, "anland-lock");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private String containerNameForCurrentSocket() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String known = prefs.getString(KEY_LAST_CONTAINER, "");
+        if (DesktopTargets.isSafeName(known)
+                && resolveSocketPath().equals(DesktopTargets.socketOf(known)))
+            return known;
+        return DesktopTargets.containerFor(resolveSocketPath());
     }
 
     // Start (or restart) this window's native pipeline, but only if the daemon
@@ -432,6 +687,7 @@ public class MainActivity extends Activity
         connectedW = viewWidth;
         connectedH = viewHeight;
         lastReconnectTimeMs = android.os.SystemClock.uptimeMillis();
+        rememberContainer(resolveSocketPath());
     }
 
     private void cancelPendingReconnect() {
@@ -764,6 +1020,15 @@ public class MainActivity extends Activity
         Log.i(TAG, "onCreate: socket=" + resolveSocketPath()
                 + " override=" + (mSocketOverride != null) + " window=" + mWindowName);
 
+        // A launch for a socket that already has a task brings that task forward
+        // instead of stacking another card in recents. Done before anything is
+        // built, so the duplicate task is dropped while it is still empty.
+        // Only parameter launches need this: the launcher starts MainActivity,
+        // which is singleTask, so it can never produce a second task.
+        if (getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_REUSE_WINDOW, true) && reuseExistingTask())
+            return;
+
         // Skip opening a duplicate: if another live window already targets this
         // socket, bring it to the front and drop this (freshly spawned) task.
         MainActivity existing = sWindowsBySocket.get(resolveSocketPath());
@@ -1058,6 +1323,12 @@ public class MainActivity extends Activity
         root.post(this::syncPointerCapture);
 
         registerWindow();
+        // Registered for the life of the window rather than per-resume: whether
+        // the pause that a screen-off causes arrives before or after the
+        // broadcast is not something to rely on, so the receiver is always there
+        // and checks where the window was when it fires.
+        registerScreenOffReceiver();
+        repairAccessibilityInBackground();
     }
 
     private static final String NOTIFICATION_CHANNEL = "anland_channel";
@@ -2070,6 +2341,7 @@ public class MainActivity extends Activity
         super.onPause();
         Log.i(TAG, "onPause: releasing immersive input");
         mResumed = false;
+        pausedAtMs = SystemClock.uptimeMillis();
         automaticImmersive.cancel();
         lifecycleHandler.removeCallbacks(automaticImmersiveEntry);
         tabletInput.cancelAll(SystemClock.uptimeMillis());
@@ -2113,6 +2385,7 @@ public class MainActivity extends Activity
     @Override
     protected void onDestroy() {
         Log.i(TAG, "onDestroy: releasing native and immersive input");
+        unregisterScreenOffReceiver();
         cancelPendingReconnect();
         lifecycleHandler.removeCallbacks(delayedFocusStop);
         lifecycleHandler.removeCallbacks(delayedSurfaceStop);

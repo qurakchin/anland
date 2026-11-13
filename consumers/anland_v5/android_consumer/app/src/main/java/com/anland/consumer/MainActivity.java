@@ -538,6 +538,7 @@ public class MainActivity extends Activity
     // "gone" closes a window that was working perfectly.
     private Boolean probeSocketRoot(String path) {
         String helperPath = getApplicationInfo().nativeLibraryDir + "/libfdhelper.so";
+        Log.i(TAG, "root socket probe start path=" + path);
         Process p = null;
         try {
             // `path` is not ours: it comes from the saved preference, which is
@@ -551,9 +552,26 @@ public class MainActivity extends Activity
                     .start();
             // Bounded on purpose. Unbounded, a wedged su pins whichever thread
             // called this for as long as it likes.
-            if (!p.waitFor(SU_PROBE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS))
+            if (!p.waitFor(SU_PROBE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "root socket probe timed out for " + path);
                 return null;
-            return p.exitValue() == 0;
+            }
+            int rc = p.exitValue();
+            if (rc != 0) {
+                // su itself failing (missing binary, denied prompt, non-zero
+                // helper) all land here. Say which, or the only visible symptom
+                // is a "Socket Not Found" toast that explains nothing.
+                String out = "";
+                try (java.io.InputStream is = p.getInputStream()) {
+                    byte[] buf = new byte[512];
+                    int n = is.read(buf);
+                    if (n > 0) out = new String(buf, 0, n);
+                } catch (Exception ignored) {
+                }
+                Log.w(TAG, "root socket probe exit=" + rc + " path=" + path
+                        + " output=" + out.trim());
+            }
+            return rc == 0;
         } catch (Exception e) {
             Log.w(TAG, "root socket probe failed: " + e);
             return null;
@@ -701,10 +719,19 @@ public class MainActivity extends Activity
                 mWindowName = name.trim();
         }
 
+        Log.i(TAG, "onCreate: socket=" + resolveSocketPath()
+                + " override=" + (mSocketOverride != null) + " window=" + mWindowName);
+
         // Skip opening a duplicate: if another live window already targets this
         // socket, bring it to the front and drop this (freshly spawned) task.
         MainActivity existing = sWindowsBySocket.get(resolveSocketPath());
-        if (existing != null && existing != this && !existing.isFinishing()) {
+        // Only a window that is actually resumed counts as the one already on
+        // screen. A paused one is behind something else -- or a leftover from a
+        // launch that bounced to Settings -- and treating it as the live copy
+        // made every later launch of the same socket finish itself on the spot,
+        // with a blank window and no explanation.
+        if (existing != null && existing != this && !existing.isFinishing()
+                && !existing.isDestroyed() && existing.mResumed) {
             ActivityManager am = getSystemService(ActivityManager.class);
             if (am != null) am.moveTaskToFront(existing.getTaskId(), 0);
             finishAndRemoveTask();

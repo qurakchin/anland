@@ -101,6 +101,30 @@ build_pkg() {
     ( cd "$tree" && patch --batch -p1 --forward --reject-file=- < "$patch" ) \
         || die "patch did not apply cleanly for $src"
 
+    # Fork: undo the SurfaceItem::addDamage shortcut the Anland patch adds.
+    #
+    # It returns early when the region being damaged is already pending, which
+    # suppresses the repaint request for that frame. The output has several
+    # buffers in rotation, and each slot remembers the damage it still owes
+    # (AnlandEglLayer::m_accumDamage); a frame whose damage never reaches the
+    # compositor leaves every other slot owing content it will never be told
+    # about. Those slots then present stale pixels: the cursor leaves ghosts of
+    # its previous positions and a freshly opened menu shows its old frames
+    # before settling. Always propagate.
+    if [ -f "$tree/src/scene/surfaceitem.cpp" ]; then
+        log "Fork: restoring full damage propagation in surfaceitem.cpp"
+        python3 - "$tree/src/scene/surfaceitem.cpp" <<'PY'
+import re, sys
+path = sys.argv[1]
+src = open(path).read()
+src = re.sub(r'\n *const bool damageAlreadyPending[^\n]*\n', '\n', src)
+src = re.sub(r'\n *if \(damageAlreadyPending\) \{\n *return;\n *\}\n', '\n', src)
+open(path, 'w').write(src)
+PY
+        grep -q "damageAlreadyPending" "$tree/src/scene/surfaceitem.cpp" \
+            && die "surfaceitem.cpp still contains damageAlreadyPending"
+    fi
+
     log "Building '$src' (.deb, keeping official version)"
     # -d: don't re-check build-deps (already installed above)
     # -b -uc -us: binary only, unsigned. changelog untouched -> official version.

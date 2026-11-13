@@ -370,8 +370,12 @@ public class MainActivity extends Activity
 
     private void pushRefreshRate() {
         Display d = getDisplay();
-        if (d != null)
+        if (d != null) {
+            Log.i(TAG, "pushRefreshRate: " + d.getRefreshRate() + "Hz display=" + d.getDisplayId());
             mNative.setRefreshRate(d.getRefreshRate());
+        } else {
+            Log.w(TAG, "pushRefreshRate: no display");
+        }
     }
 
     // Push the current connection settings (socket path / root mode) to native
@@ -1867,6 +1871,8 @@ public class MainActivity extends Activity
      * Move the shared cursor by a delta in view pixels and report it to the remote.
      * Both touchpads and a captured mouse end up here.
      */
+    private int motionLogCounter;
+
     private void movePointerBy(float dx, float dy) {
         if (!Float.isFinite(dx) || !Float.isFinite(dy)
                 || (dx == 0f && dy == 0f))
@@ -1890,6 +1896,10 @@ public class MainActivity extends Activity
         mNative.sendMouseMotion((pointerX - originX) * scaleX,
                 (pointerY - originY) * scaleY,
                 dx * scaleX, dy * scaleY);
+        if ((++motionLogCounter & 15) == 0)
+            Log.i(TAG, "movePtr dx=" + (dx * scaleX) + " dy=" + (dy * scaleY)
+                    + " absX=" + ((pointerX - originX) * scaleX)
+                    + " absY=" + ((pointerY - originY) * scaleY));
     }
 
     /*

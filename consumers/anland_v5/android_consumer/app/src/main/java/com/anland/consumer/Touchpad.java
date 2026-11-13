@@ -196,6 +196,15 @@ public final class Touchpad {
 
     private float smoothedDx = 0f;
     private float smoothedDy = 0f;
+
+    // Speed reference for the acceleration curve: 1.2 px/ms is a brisk flick on
+    // this class of digitiser, and the curve saturates well before a fast throw.
+    private static final float ACCEL_REFERENCE_SPEED = 1.2f;
+    // Inter-sample time is clamped so a stalled frame or a burst of coalesced
+    // samples cannot read as an artificial crawl or an artificial fling.
+    private static final long ACCEL_MIN_DT_MS = 6L;
+    private static final long ACCEL_MAX_DT_MS = 40L;
+    private long lastMotionTime = 0L;
     private float accumulatedX = 0f;
     private float accumulatedY = 0f;
     private boolean smoothInitialized = false;
@@ -685,15 +694,31 @@ public final class Touchpad {
                     float smoothDy = smoothed[1];
 
                     if (smoothDx != 0f || smoothDy != 0f) {
-                        // 计算移动距离（平滑后的欧式距离）
-                        float distance = (float) Math.hypot(smoothDx, smoothDy);
+                        // Non-uniform acceleration driven by speed, not by how far
+                        // this one sample moved. Scaling per-sample distance made
+                        // the same hand motion accelerate differently depending on
+                        // how often the digitiser reports (double the report rate,
+                        // half the distance per sample, half the gain), which is
+                        // why the feel never matched a real touchpad. Speed in
+                        // px/ms is report-rate independent.
+                        long now = event.getEventTime();
+                        long dt = lastMotionTime == 0L
+                                ? ACCEL_MIN_DT_MS : now - lastMotionTime;
+                        dt = Math.max(ACCEL_MIN_DT_MS, Math.min(ACCEL_MAX_DT_MS, dt));
+                        lastMotionTime = now;
 
-                        // 改进的加速度曲线：以 10px 为参考阈值，使小位移也能获得明显加速
-                        float speedFactor = distance / 10.0f;
-                        // 使用 sigmoid-like 曲线：scale = 1 + (strength - 1) * (speed / (1 + speed))
-                        float dynamicScale = 1.0f + (mouseAccelStrength - 1.0f) * (speedFactor / (1.0f + speedFactor));
-                        // 限制范围，防止失控（最大不超过 10 倍）
-                        dynamicScale = Math.max(0.3f, Math.min(10.0f, dynamicScale));
+                        float distance = (float) Math.hypot(smoothDx, smoothDy);
+                        float speed = distance / dt;                       // px/ms
+                        // Saturating curve: 1.0 at rest, approaching `strength`
+                        // as the finger moves faster. A quarter of the reference
+                        // speed already delivers a quarter of the extra gain, so
+                        // slow aiming stays precise instead of crawling.
+                        float v = speed / ACCEL_REFERENCE_SPEED;
+                        float curve = v / (1.0f + v);
+                        float dynamicScale = 1.0f + (mouseAccelStrength - 1.0f) * curve;
+                        // Never slow the pointer below 1:1; slow aiming has to stay
+                        // predictable. The upper bound only guards against runaway.
+                        dynamicScale = Math.max(1.0f, Math.min(10.0f, dynamicScale));
 
                         float moveX = smoothDx * dynamicScale;
                         float moveY = smoothDy * dynamicScale;
@@ -1015,6 +1040,7 @@ public final class Touchpad {
         accumulatedX = 0f;
         accumulatedY = 0f;
         smoothInitialized = false;
+        lastMotionTime = 0L;
     }
 
     private float[] applySmoothing(float rawDx, float rawDy) {

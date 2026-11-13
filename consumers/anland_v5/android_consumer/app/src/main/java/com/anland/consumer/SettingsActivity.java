@@ -1325,7 +1325,7 @@ public class SettingsActivity extends Activity {
 
         SeekBar accelSeek = new SeekBar(this);
         accelSeek.setMax(190); // 0.5 ~ 10.0 step 0.05
-        float curAccel = prefs.getFloat(KEY_MOUSE_ACCEL, 1.0f);
+        float curAccel = prefs.getFloat(KEY_MOUSE_ACCEL, MainActivity.DEFAULT_MOUSE_ACCEL);
         curAccel = Math.max(0.5f, Math.min(10.0f, curAccel));
         accelSeek.setProgress((int)((curAccel - 0.5f) / 0.05f));
         accelValue.setText(getString(R.string.mouse_accel_value, curAccel));

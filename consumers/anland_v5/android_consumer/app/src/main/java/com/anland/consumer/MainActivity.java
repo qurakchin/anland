@@ -180,6 +180,8 @@ public class MainActivity extends Activity
     // ==================== 触摸板相关设置 ====================
     public static final String KEY_TOUCHPAD_MODE = "touchpad_mode";
     public static final String KEY_MOUSE_ACCEL = "mouse_speed"; // 名称仍为 speed，实际控制加速度强度
+    /** Default pointer acceleration strength; 1.0 would mean no acceleration. */
+    static final float DEFAULT_MOUSE_ACCEL = 1.8f;
     // Two-finger scroll tuning, shared by the on-screen and captured touchpads.
     public static final String KEY_SCROLL_SPEED = "scroll_speed";
     public static final String KEY_SCROLL_REVERSE = "scroll_reverse";
@@ -1235,7 +1237,7 @@ public class MainActivity extends Activity
      */
     private void applyTouchpadPrefs(SharedPreferences prefs) {
         capturedTouchpadAccel = Math.max(0.5f,
-                Math.min(10.0f, prefs.getFloat(KEY_MOUSE_ACCEL, 1.0f)));
+                Math.min(10.0f, prefs.getFloat(KEY_MOUSE_ACCEL, DEFAULT_MOUSE_ACCEL)));
         applyTouchpadPrefs(prefs, screenTouchpad);
         applyTouchpadPrefs(prefs, capturedTouchpad);
     }
@@ -1251,7 +1253,7 @@ public class MainActivity extends Activity
                     prefs.getInt(KEY_PAD_SCROLL_GUARD_MS, 0),
                     prefs.getBoolean(KEY_PAD_DEBUG, false));
         pad.setAccelStrength(Math.max(0.5f,
-                Math.min(10.0f, prefs.getFloat(KEY_MOUSE_ACCEL, 1.0f))));
+                Math.min(10.0f, prefs.getFloat(KEY_MOUSE_ACCEL, DEFAULT_MOUSE_ACCEL))));
         pad.setScrollSpeed(prefs.getFloat(KEY_SCROLL_SPEED,
                 Touchpad.DEFAULT_SCROLL_SPEED));
         pad.setScrollReversed(prefs.getBoolean(KEY_SCROLL_REVERSE, false));

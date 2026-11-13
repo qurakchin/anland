@@ -141,15 +141,24 @@ void AnlandInputDevice::pointerMotionAbsolute(const QPointF &position)
 
 void AnlandInputDevice::pointerMotion(const QPointF &position, const QPointF &delta, const QPointF &deltaNonAccelerated)
 {
-    // KWin moves the cursor by a relative motion's delta (PointerInputRedirection
-    // does processMotionInternal(m_pos + delta, ...)). Emit the relative motion
-    // first so wl_pointer.relative_motion sees it, then the absolute one, which
-    // puts the cursor exactly where the host's is. The other order let the
-    // absolute position be set and then the same delta be added on top of it,
-    // leaving the cursor one delta ahead of the host per frame -- drift that
-    // accumulated and became a visibly short stroke on fast slides.
-    Q_EMIT InputDevice::pointerMotion(delta, deltaNonAccelerated, now(), this);
-    Q_EMIT InputDevice::pointerMotionAbsolute(position, now(), this);
+    // Send the movement, not both the movement and a position.
+    //
+    // The consumer computes the delta from the finger and carries an absolute
+    // position of its own. Emitting both made KWin apply the delta and then snap
+    // to that copy; the two disagree as soon as either side clamps at a screen
+    // edge or the consumer's copy drifts, and the cursor then alternates between
+    // two positions on every frame -- the jitter that got worse right after a
+    // click, because a click re-seeds the consumer's copy.
+    //
+    // Owning the position here also means the relative event is the only motion
+    // KWin processes per frame, which halves the compositor work per sample.
+    // A motion carrying no delta at all is still a placement (the consumer's
+    // first event, or a caller positioning the cursor), so keep that path.
+    if (delta.isNull()) {
+        Q_EMIT InputDevice::pointerMotionAbsolute(position, now(), this);
+    } else {
+        Q_EMIT InputDevice::pointerMotion(delta, deltaNonAccelerated, now(), this);
+    }
     Q_EMIT InputDevice::pointerFrame(this);
 }
 

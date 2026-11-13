@@ -572,12 +572,16 @@ public class MainActivity extends Activity
     private static String accessibilityRepairCommand() {
         final String own = "com.anland.consumer/com.anland.consumer.KeyInterceptor";
         final String keyMapper = "io.github.sds100.keymapper";
+        final String keyMapperService = keyMapper
+                + "/io.github.sds100.keymapper.system.accessibility.MyAccessibilityService";
         final String self = "com.anland.consumer";
-        return "cur=$(settings get secure enabled_accessibility_services); "
+        return "for s in " + own + " " + keyMapperService + "; do "
+                + "cur=$(settings get secure enabled_accessibility_services); "
                 + "[ \"$cur\" = null ] && cur=; "
-                + "case \"$cur\" in *" + own + "*) ;; *) "
-                + "if [ -z \"$cur\" ]; then cur=" + own + "; else cur=\"$cur:" + own + "\"; fi; "
-                + "settings put secure enabled_accessibility_services \"$cur\";; esac; "
+                + "case \"$cur\" in *\"$s\"*) continue;; esac; "
+                + "if [ -z \"$cur\" ]; then cur=$s; else cur=\"$cur:$s\"; fi; "
+                + "settings put secure enabled_accessibility_services \"$cur\"; "
+                + "done; "
                 + "settings put secure accessibility_enabled 1; "
                 + "skip=$(settings get secure accessibility_turn_off_skip_package); "
                 + "[ \"$skip\" = null ] && skip=; "

@@ -132,11 +132,16 @@ final class DesktopTargets {
     static String lockCommand(String container) {
         if (!isSafeName(container))
             return null;
+        // The session bus only answers a peer running as the user that owns
+        // /run/user/<id>; a root peer gets "NoReply" from the bus. The owner is
+        // read from the directory rather than assumed to be uid 1000.
         String script = "for b in /run/user/*/bus; do "
                 + "[ -S \"$b\" ] || continue; "
-                + "DBUS_SESSION_BUS_ADDRESS=unix:path=$b "
-                + "qdbus6 org.freedesktop.ScreenSaver /ScreenSaver Lock >/dev/null 2>&1 "
-                + "&& exit 0; "
+                + "u=$(stat -c %U \"${b%/bus}\" 2>/dev/null) || continue; "
+                + "[ -n \"$u\" ] || continue; "
+                + "su - \"$u\" -c \"DBUS_SESSION_BUS_ADDRESS=unix:path=$b "
+                + "qdbus6 org.freedesktop.ScreenSaver /ScreenSaver Lock\" "
+                + ">/dev/null 2>&1 && exit 0; "
                 + "done; exit 1";
         return BINARY + " -n " + container + " run -- sh -c " + SuCommand.shellQuote(script);
     }

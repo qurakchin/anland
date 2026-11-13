@@ -536,6 +536,42 @@ public class MainActivity extends Activity
     // prompt -- is *not* the same as a socket that is gone, which is why this
     // answers in three states rather than two. Treating "could not tell" as
     // "gone" closes a window that was working perfectly.
+    /**
+     * The newest anland daemon socket under the container's net directory.
+     *
+     * <p>KernelSU's su only works here because this app is on its allowlist; the
+     * listing itself needs root because the directory is system_data_file. A
+     * stale socket left over from a previous session sorts older, so the first
+     * line is the one actually being served.
+     */
+    private String discoverLiveSocket() {
+        Process p = null;
+        try {
+            p = new ProcessBuilder("su", "-c",
+                    "ls -t /data/local/Droidspaces/Net/anland-*.sock 2>/dev/null | head -1")
+                    .redirectErrorStream(true)
+                    .start();
+            if (!p.waitFor(SU_PROBE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "live socket discovery timed out");
+                return null;
+            }
+            if (p.exitValue() != 0)
+                return null;
+            String out;
+            try (java.io.InputStream is = p.getInputStream()) {
+                byte[] buf = new byte[512];
+                int n = is.read(buf);
+                out = n > 0 ? new String(buf, 0, n).trim() : "";
+            }
+            return out.isEmpty() ? null : out;
+        } catch (Exception e) {
+            Log.w(TAG, "live socket discovery failed: " + e);
+            return null;
+        } finally {
+            if (p != null) p.destroy();
+        }
+    }
+
     private Boolean probeSocketRoot(String path) {
         String helperPath = getApplicationInfo().nativeLibraryDir + "/libfdhelper.so";
         Log.i(TAG, "root socket probe start path=" + path);
@@ -742,7 +778,24 @@ public class MainActivity extends Activity
         // pipeline. If it is not: a parameter launch has nowhere to fall back to
         // (toast and quit); a plain launcher start bounces to Settings so the user
         // can fix the path.
-        if (!isSocketFile(resolveSocketPath())) {
+        //
+        // Before giving up, look for the socket the container is actually
+        // serving now. The daemon names its socket after the container session,
+        // so every container start publishes a new file and the fixed entry
+        // point left behind by the setup dangles; the window then opened
+        // Settings and sat there until someone re-pointed the symlink by hand.
+        // Only for a plain launch: an explicit path came from the launcher on
+        // purpose and must not be second-guessed.
+        String socketPath = resolveSocketPath();
+        if (mSocketOverride == null && !isSocketFile(socketPath)) {
+            String live = discoverLiveSocket();
+            if (live != null && isSocketFile(live)) {
+                Log.i(TAG, "socket " + socketPath + " is dead; using " + live);
+                socketPath = live;
+                mSocketOverride = live; // this window's pipeline uses it
+            }
+        }
+        if (!isSocketFile(socketPath)) {
             if (mSocketOverride != null) {
                 android.widget.Toast.makeText(this, "Socket Not Found",
                         android.widget.Toast.LENGTH_SHORT).show();

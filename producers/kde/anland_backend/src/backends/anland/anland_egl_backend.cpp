@@ -287,16 +287,35 @@ int AnlandEglLayer::targetBufferIndex() const
 void AnlandEglLayer::scheduleBufferCatchUp(int index)
 {
     if (index >= 0 && index < m_bufCount && !m_accumDamage[index].isEmpty()) {
-        // Only this slot's old content needs painting. Do not add new damage
-        // to the other rotation buffers when asking the compositor to run.
+        // Run a frame that paints this slot's debt. The paint itself is driven by
+        // doBeginFrame() handing the debt back as the frame's repaint region; all
+        // that is missing without help is a reason for composite() to enter its
+        // paint pass, and needsRepaint() provides that without touching the
+        // layer's damage. Publishing the debt with addRepaint() instead would put
+        // it into the frame's damage report and the ring would keep re-owing it.
 #ifdef ANLAND_KWIN_66
         // KWin 6.6 added per-layer repaint scheduling.
         scheduleRepaint(nullptr);
 #else
-        // Older KWin versions schedule the compositor through the render loop.
         m_output->renderLoop()->scheduleRepaint();
 #endif
     }
+}
+
+bool AnlandEglLayer::needsRepaint() const
+{
+    if (OutputLayer::needsRepaint()) {
+        return true;
+    }
+    // A rotation buffer that still owes damage must not be presented before it is
+    // painted. composite() only runs its paint pass when a layer reports that it
+    // needs a repaint, and this per-slot debt is private to the layer
+    // (doBeginFrame() hands it over as the paint region), so the gate has to
+    // consult it here. Reporting it through addRepaint() would work too, but then
+    // the debt ends up in the frame's damage report and gets spread to the other
+    // slots again on every catch-up, so the ring would never go idle.
+    const int index = targetBufferIndex();
+    return index >= 0 && !m_accumDamage[index].isEmpty();
 }
 
 #ifdef ANLAND_KWIN_68
@@ -308,10 +327,24 @@ bool AnlandEglLayer::doEndFrame(const QRegion &renderedDeviceRegion, const QRegi
 #endif
 {
     glFlush(); // flush pending rendering commands into the dmabuf.
-    // Every buffer owes this frame's damage; the buffer we just painted is now
-    // fully up to date, so clear its debt.
+    // Every other buffer owes the damage this frame reported; the buffer we
+    // just painted is now fully up to date, so clear its debt.
+    //
+    // It has to be the frame's damage report (damagedDeviceRegion), not the
+    // painted region: renderedDeviceRegion also carries the debt this slot had
+    // from earlier frames, which every slot was told about when it first
+    // appeared. Spreading it again would make the ring owe the same region
+    // forever, and the compositor would never stop repainting.
+    //
+    // The report is pure scene damage: the catch-up debt reaches the paint pass
+    // through doBeginFrame() instead of the layer's repaint list, so nothing has
+    // to be filtered out here. That matters because a stale region and fresh
+    // damage can cover exactly the same pixels (a pointer that moved back over
+    // its own old spot); subtracting the catch-up region would silently drop
+    // that damage and leave ghosts in every other slot.
+    const auto &newDamage = damagedDeviceRegion;
     for (int i = 0; i < m_bufCount; i++) {
-        m_accumDamage[i] = m_accumDamage[i] + damagedDeviceRegion;
+        m_accumDamage[i] = m_accumDamage[i] + newDamage;
     }
     if (m_currentIndex < m_bufCount) {
         #ifdef ANLAND_KWIN_66

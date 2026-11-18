@@ -123,8 +123,27 @@ public:
      */
     int targetBufferIndex() const;
 
-    /** Wake the compositor only when the newly selected buffer owes a repaint. */
+    /**
+     * Ask for exactly the repaint the newly selected buffer still owes.
+     *
+     * Scheduling the render loop alone is not enough: composite() only paints
+     * when the layers report damage. needsRepaint() below answers that gate
+     * from the selected slot's debt; the region is handed to the paint pass by
+     * doBeginFrame() and never enters the frame's damage report.
+     */
     void scheduleBufferCatchUp(int index);
+
+#ifndef ANLAND_KWIN_66
+    /**
+     * Also report a repaint when the buffer the consumer just selected still
+     * owes damage. KWin's own damage list is left untouched: anything put there
+     * ends up in the frame's damage report, which is then spread to the other
+     * rotation buffers and would keep the ring repainting forever.
+     *
+     * Requires OutputLayer::needsRepaint() to be virtual (fork patch).
+     */
+    bool needsRepaint() const override;
+#endif
 
 private:
     void onOutputTransformChanged();

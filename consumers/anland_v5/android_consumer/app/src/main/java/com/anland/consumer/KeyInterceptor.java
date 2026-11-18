@@ -107,6 +107,21 @@ public class KeyInterceptor extends AccessibilityService {
         return info != null && info.getId() != null;
     }
 
+    /**
+     * True while this service is the one forwarding keys: it is connected, its
+     * filter flag is set, and interception is still switched on in the settings.
+     *
+     * <p>The window must not forward in that state. Returning true from
+     * {@link #onKeyEvent} does not stop the event reaching the window on
+     * ColorOS, so forwarding there as well sent every keystroke to the desktop
+     * twice (two characters per key with interception on, one with it off).
+     */
+    public static boolean isIntercepting() {
+        MainActivity instance = getMainActivity();
+        return self != null && self.enabled && instance != null
+                && instance.isAccessibilityInterceptEnabled();
+    }
+
     private static final Runnable disableImmediatelyCallback = KeyInterceptor::disableImmediately;
     private static void disableImmediately() {
         if (self == null) return;

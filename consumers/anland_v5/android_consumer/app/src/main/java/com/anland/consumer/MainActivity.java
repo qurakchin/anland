@@ -3314,6 +3314,12 @@ public class MainActivity extends Activity
             return true;
         if (isAndroidBrightnessKey(event))
             return false; // Android still owns the backlight
+        // With interception on, the accessibility service has already forwarded
+        // this key. ColorOS still delivers the same event here (returning true
+        // from the service does not drop it), so forwarding again would type
+        // every key twice.
+        if (KeyInterceptor.isIntercepting())
+            return true;
         // Before the repeat swallow: each repeat must become one more tap, so
         // held-key auto-repeat still works (see handleImeDelTap).
         if (handleImeDelTap(event))
@@ -3451,6 +3457,8 @@ public class MainActivity extends Activity
             return true;
         if (isAndroidBrightnessKey(event))
             return false; // Android still owns the backlight
+        if (KeyInterceptor.isIntercepting())
+            return true; // the accessibility service forwards the release too
         if (handleImeDelTap(event))
             return true;
         forwardKeyToLinux(event);
